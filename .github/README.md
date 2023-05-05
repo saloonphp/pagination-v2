@@ -13,6 +13,8 @@
 - [ ] Consider adding default implementations of all types of paginator
 - [ ] Test being able to use synchronous pagination with an async paginator (async = false)
 - [ ] Test logic exception if trying to use non-async pagination on an asynchronous paginator
+- [ ] Method to apply additional logic to the request before it is sent, like a delay
+- [ ] Serializing paginators
 
 ## Docs
 

@@ -12,6 +12,7 @@ use Saloon\Contracts\Connector;
 use Illuminate\Support\LazyCollection;
 use GuzzleHttp\Promise\PromiseInterface;
 use Sammyjo20\SaloonPagination\Traits\HasAsyncPagination;
+use Sammyjo20\SaloonPagination\Traits\Middleware\ThrowAndCountItems;
 
 abstract class Paginator implements Iterator
 {
@@ -51,6 +52,13 @@ abstract class Paginator implements Iterator
     protected int $totalResults = 0;
 
     /**
+     * The starting page
+     *
+     * @var int
+     */
+    protected int $startingPage = 1;
+
+    /**
      * @param Connector $connector
      * @param Request $request
      */
@@ -58,16 +66,6 @@ abstract class Paginator implements Iterator
     {
         $this->connector = clone $connector;
         $this->request = clone $request;
-
-        // We'll register two middleware. One will force any requests to throw an exception
-        // if the request fails. This will prevent the rest of our paginator to keep
-        // on iterating if something goes wrong. The second middleware allows us
-        // to increment the total results which can be used to check if we
-        // are at the end of a page.
-
-        $this->connector->middleware()
-            ->onResponse(static fn (Response $response) => $response->throw())
-            ->onResponse(fn (Response $response) => $this->totalResults += count($this->getPageItems($response)));
     }
 
     /**
@@ -77,11 +75,20 @@ abstract class Paginator implements Iterator
      */
     public function current(): Response|PromiseInterface
     {
+        // Let's start by applying our pagination and applying our middleware
+        // which will throw and count the number of items.
+
         $request = $this->applyPagination(clone $this->request);
+
+        $request->middleware()->onResponse(new ThrowAndCountItems($this, $this->getPageItems(...)));
+
+        // When async pagination is disabled, we will just return the current response.
 
         if ($this->isAsyncPaginationEnabled() === false) {
             return $this->currentResponse = $this->connector->send($request);
         }
+
+        // Otherwise, we'll use send async
 
         $promise = $this->connector->sendAsync($request);
 
@@ -153,7 +160,7 @@ abstract class Paginator implements Iterator
      */
     public function rewind(): void
     {
-        $this->page = 1;
+        $this->page = $this->startingPage;
         $this->currentResponse = null;
         $this->totalResults = 0;
         $this->onRewind();
@@ -215,6 +222,16 @@ abstract class Paginator implements Iterator
     }
 
     /**
+     * Set the total number of results
+     *
+     * @param int $totalResults
+     */
+    public function setTotalResults(int $totalResults): void
+    {
+        $this->totalResults = $totalResults;
+    }
+
+    /**
      * Check if async pagination is enabled
      *
      * @return bool
@@ -250,4 +267,21 @@ abstract class Paginator implements Iterator
      * @return array
      */
     abstract protected function getPageItems(Response $response): array;
+
+    /**
+     * Put the paginator to sleep
+     *
+     * @return array
+     */
+    public function __sleep(): array
+    {
+        $this->startingPage = $this->page;
+
+        $ignore = ['currentResponse'];
+
+        return array_filter(
+            array_keys(get_object_vars($this)),
+            static fn(string $item) => !in_array($item, $ignore, true)
+        );
+    }
 }
